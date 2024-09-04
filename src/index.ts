@@ -204,7 +204,7 @@ export class TaskRunner<Tags extends string> {
    * Runs one worker until queues are finished.
    */
   private async worker(): Promise<void> {
-    while (this._error === null && this.queue.length > 0) {
+    while (this._error === null && (this.queue.length > 0 || this.runningTasks.length > 0)) {
 
       // Load information about currently-running tasks
       const unfinishedTasksByTag = this.getTasksByTag(false);
