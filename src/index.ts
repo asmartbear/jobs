@@ -10,12 +10,7 @@ export enum TaskState {
   Error
 }
 
-export type TaskRunnerConstructor = {
-
-  /**
-   * The concurrency level, or undefined to use the number of CPUs available.
-   */
-  concurrencyLevel?: number,
+export type TaskRunnerConstructor<Tags extends string> = {
 
   /**
    * Log on the console when the whole runner starts?
@@ -36,6 +31,16 @@ export type TaskRunnerConstructor = {
    * Log on the console when a task completes?
    */
   logTaskEnd?: boolean
+
+  /**
+   * The total concurrency level, or undefined to use the number of CPUs available.
+   */
+  concurrencyLevel?: number,
+
+  /**
+   * The maximum concurrency level per tag; missing tags are unlimited.
+   */
+  concurrencyPerTag?: Partial<Record<Tags, number>>,
 }
 
 /**
@@ -118,7 +123,7 @@ export class Task<Tags extends string> {
     }
   }
 
-  isReady(readyQueue: Task<Tags>[], runningTasks: Task<Tags>[], unfinishedTasksByTag: Map<Tags, Task<Tags>[]>): boolean {
+  isReady(config: TaskRunnerConstructor<Tags>, readyQueue: Task<Tags>[], runningTasks: Task<Tags>[], unfinishedTasksByTag: Map<Tags, Task<Tags>[]>, runningTasksByTag: Map<Tags, Task<Tags>[]>): boolean {
 
     // Have to be "new" to be ready
     if (this.state !== TaskState.New) return false;
@@ -134,6 +139,12 @@ export class Task<Tags extends string> {
 
     // Check tag-based completion dependency
     if (this.dependentTags.some(tag => (unfinishedTasksByTag.get(tag) ?? []).length > 0)) return false;
+
+    // Check concurrency-based tags-running
+    for (const tag of this.tags) {
+      const concurrency = config.concurrencyPerTag?.[tag] ?? 9999;
+      if ((runningTasksByTag.get(tag) ?? []).length >= concurrency) return false;
+    }
 
     return true;
   }
@@ -170,7 +181,7 @@ export class TaskRunner<Tags extends string> {
   private doneTasks: Task<Tags>[] = [];
   private _error: Error | null = null;
 
-  constructor(public readonly config: TaskRunnerConstructor) {
+  constructor(public readonly config: TaskRunnerConstructor<Tags>) {
     // nothing else to do
   }
 
@@ -207,10 +218,11 @@ export class TaskRunner<Tags extends string> {
     while (this._error === null && (this.queue.length > 0 || this.runningTasks.length > 0)) {
 
       // Load information about currently-running tasks
+      const runningTasksByTag = this.getTasksByTag(true);
       const unfinishedTasksByTag = this.getTasksByTag(false);
 
       // Find the next task to run
-      const readyTaskIndex = this.queue.findIndex(task => task.isReady(this.queue, this.runningTasks, unfinishedTasksByTag));
+      const readyTaskIndex = this.queue.findIndex(task => task.isReady(this.config, this.queue, this.runningTasks, unfinishedTasksByTag, runningTasksByTag));
       if (readyTaskIndex === -1) {
         await new Promise(resolve => setTimeout(resolve, 50)); // Wait a beat
         continue;
@@ -274,6 +286,9 @@ export class TaskRunner<Tags extends string> {
 //     logRunnerEnd: true,
 //     logTaskStart: true,
 //     logTaskEnd: true,
+//     concurrencyPerTag: {
+//       'foo': 2,
+//     }
 //   });
 
 //   const task1 = manager.addTask({
@@ -293,7 +308,7 @@ export class TaskRunner<Tags extends string> {
 
 //   const task3 = manager.addTask({
 //     title: "Task 3",
-//     dependentTags: ["foo", "bar"],
+//     tags: ["foo"],
 //   }, async () => {
 //     await new Promise(resolve => setTimeout(resolve, 250));
 //   });
@@ -301,13 +316,10 @@ export class TaskRunner<Tags extends string> {
 //   const task4 = manager.addTask({
 //     title: "Task 4",
 //     tags: ["bar"],
-//     dependentTags: ["foo"],
 //   }, async () => {
 //     await new Promise(resolve => setTimeout(resolve, 1));
 //   });
 
-//   // task1.addDependentTask(task3);
-//   // task2.addDependentTask(task3);
 
 //   await manager.run();
 

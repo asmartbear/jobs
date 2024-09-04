@@ -11,7 +11,7 @@ Simple job-runner with features:
 
 * All else being equal, tasks are started in the order they were enqueued.
 * Tasks will not start based on:
-    * max-per-tag
+    * max running tasks per tag
     * priority queue for others not started
     * priority queue for others others not completed
     * dependency on specific other tasks
