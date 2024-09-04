@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "baseUrl": "./src",
+    "outDir": "./dist",
+    "sourceMap": true,
+    "declaration": true,
+    "strict": true,
+    "noImplicitAny": true,
+    "pretty": false,
+    "moduleResolution": "node",
+    "lib": [
+      "esnext"
+    ],
+    "module": "commonjs",
+    "target": "es5",
+    "types": [
+      "jest",
+      "node"
+    ]
+  },
+  "include": [
+    "./src/**/*.ts",
+  ]
+}

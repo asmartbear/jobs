@@ -1,0 +1,71 @@
+{
+  "name": "@asmartbear/jobs",
+  "version": "1.0.1",
+  "description": "Simple job-runner with priorities, dependencies, and tag-groups",
+  "keywords": [
+    "jobs",
+    "queue"
+  ],
+  "scripts": {
+    "type-check": "tsc --noEmit",
+    "test": "jest --runInBand",
+    "watch": "npm test -- --watchAll --coverage",
+    "coverage": "npm test -- --coverage",
+    "postcoverage": "open-cli coverage/lcov-report/index.html",
+    "lint": "tslint -c tslint.json 'src/**/*.{ts,tsx}'",
+    "clean": "rimraf dist",
+    "prebuild": "npm run clean",
+    "build": "tsc",
+    "main": "tsc && node dist/index.js",
+    "minify": "uglifyjs --compress --mangle --output dist/index.min.js -- dist/index.js",
+    "postbuild": "npm run minify",
+    "prerelease": "npm test && npm run build",
+    "prepare": "npm test && npm run build",
+    "release": "standard-version",
+    "postpublish": "git push origin main --follow-tags"
+  },
+  "devDependencies": {
+    "@types/jest": "25.2.1",
+    "@types/mocha": "7.0.2",
+    "@types/node": "13.11.1",
+    "benchmark": "2.1.4",
+    "jest": "25.3.0",
+    "open-cli": "6.0.1",
+    "rimraf": "2.6.3",
+    "standard-version": "6.0.1",
+    "ts-jest": "25.3.1",
+    "ts-loader": "6.2.2",
+    "tslint": "6.1.1",
+    "typescript": "3.8.3",
+    "uglify-js": "3.13.8"
+  },
+  "license": "MIT",
+  "repository": {
+    "url": "git@github.com:asmartbear/jobs.git",
+    "type": "git"
+  },
+  "bugs": {
+    "url": "https://github.com/asmartbear/jobs/issues"
+  },
+  "author": {
+    "name": "Jason Cohen",
+    "url": "https://github.com/asmartbear"
+  },
+  "main": "dist/index.min.js",
+  "files": [
+    "dist"
+  ],
+  "types": "dist",
+  "jest": {
+    "testEnvironment": "node",
+    "moduleFileExtensions": [
+      "ts",
+      "tsx",
+      "js"
+    ],
+    "transform": {
+      "\\.(ts|tsx)$": "ts-jest"
+    },
+    "testRegex": "test/.*\\.(ts|tsx|js)$"
+  }
+}

@@ -1,0 +1,24 @@
+{
+    "editor.formatOnSave": true,
+    "deno.enable": false,
+    "html.format.wrapLineLength": 120,
+    "editor.wordWrap": "on",
+    "editor.wordWrapColumn": 120,
+    "explorer.openEditors.sortOrder": "fullPath",
+    "files.exclude": {
+        "**/node_modules": true,
+        "**/.make.*": true,
+        "**/dist": true,
+    },
+    "markdown.validate.enabled": true,
+    "markdown.math.enabled": false,
+    "[markdown]": {
+        "editor.formatOnSave": false
+    },
+    "[html]": {
+        "editor.formatOnSave": false
+    },
+    "[scss]": {
+        "editor.formatOnSave": false
+    }
+}
