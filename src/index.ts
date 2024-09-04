@@ -63,6 +63,11 @@ export type TaskConstructor<Tags extends string> = {
    * Tags to apply to this task.
    */
   tags?: Tags[]
+
+  /**
+   * If there are tasks tagged with any of these, we wait for them to complete before we can run.
+   */
+  dependentTags?: Tags[]
 }
 
 /**
@@ -91,22 +96,31 @@ export class Task<Tags extends string> {
   public readonly tags: Tags[]
 
   /**
+   * If there are tasks tagged with any of these, we wait for them to complete before we can run.
+   */
+  public readonly dependentTags: Tags[]
+
+  private readonly dependentTasks: Task<Tags>[] = [];
+
+  /**
    * The current state of the Task.
    */
   public state: TaskState = TaskState.New;
-  private readonly dependentTasks: Task<Tags>[] = [];
 
   constructor(config: TaskConstructor<Tags>, private readonly executionFunction: () => Promise<void>) {
     this.title = config.title
     this.priority = config.priority ?? 0
     this.completionPriority = config.completionPriority ?? 0
     this.tags = config.tags ?? []
+    this.dependentTags = config.dependentTags ?? []
     if (this.tags.length > 0) {
       this.title += " [" + this.tags.join(", ") + "]"
     }
   }
 
-  isReady(readyQueue: Task<Tags>[], runningTasks: Task<Tags>[]): boolean {
+  isReady(readyQueue: Task<Tags>[], runningTasks: Task<Tags>[], unfinishedTasksByTag: Map<Tags, Task<Tags>[]>): boolean {
+
+    // Have to be "new" to be ready
     if (this.state !== TaskState.New) return false;
 
     // Check task list dependency
@@ -117,6 +131,9 @@ export class Task<Tags extends string> {
 
     // Check completion weight dependency against running tasks
     if (runningTasks.some(task => task.priority < this.completionPriority)) return false;
+
+    // Check tag-based completion dependency
+    if (this.dependentTags.some(tag => (unfinishedTasksByTag.get(tag) ?? []).length > 0)) return false;
 
     return true;
   }
@@ -189,10 +206,13 @@ export class TaskRunner<Tags extends string> {
   private async worker(): Promise<void> {
     while (this._error === null && this.queue.length > 0) {
 
+      // Load information about currently-running tasks
+      const unfinishedTasksByTag = this.getTasksByTag(false);
+
       // Find the next task to run
-      const readyTaskIndex = this.queue.findIndex(task => task.isReady(this.queue, this.runningTasks));
+      const readyTaskIndex = this.queue.findIndex(task => task.isReady(this.queue, this.runningTasks, unfinishedTasksByTag));
       if (readyTaskIndex === -1) {
-        await new Promise(resolve => setTimeout(resolve, 100)); // Wait a beat
+        await new Promise(resolve => setTimeout(resolve, 50)); // Wait a beat
         continue;
       }
 
@@ -222,59 +242,80 @@ export class TaskRunner<Tags extends string> {
   get error(): Error | null {
     return this._error;
   }
-}
 
-// Usage example
-async function main() {
-  const manager = new TaskRunner<"foo" | "bar">({
-    concurrencyLevel: 2,
-    logRunnerStart: true,
-    logRunnerEnd: true,
-    logTaskStart: true,
-    logTaskEnd: true,
-  });
-
-  const task1 = manager.addTask({
-    title: "Task 1",
-    priority: 1,
-    tags: ["foo"],
-  }, async () => {
-    await new Promise(resolve => setTimeout(resolve, 500));
-  });
-
-  const task2 = manager.addTask({
-    title: "Task 2",
-    priority: 2,
-    tags: ["foo"],
-  }, async () => {
-    await new Promise(resolve => setTimeout(resolve, 750));
-    // throw new Error("Task 2 failed");
-  });
-
-  const task3 = manager.addTask({
-    title: "Task 3",
-    priority: 3,
-  }, async () => {
-    await new Promise(resolve => setTimeout(resolve, 250));
-  });
-
-  const task4 = manager.addTask({
-    title: "Task 4",
-    priority: 4,
-  }, async () => {
-    await new Promise(resolve => setTimeout(resolve, 1));
-  });
-
-  // task1.addDependentTask(task3);
-  // task2.addDependentTask(task3);
-
-  await manager.run();
-
-  if (manager.error) {
-    console.error("An error occurred:", manager.error);
-  } else {
-    console.log("All tasks completed successfully");
+  /**
+   * Returns the list of tasks, organized by tag.
+   * 
+   * @param onlyRunning if true, only currently-running, otherwise everything that isn't finished
+   */
+  getTasksByTag(onlyRunning: boolean): Map<Tags, Task<Tags>[]> {
+    const result = new Map<Tags, Task<Tags>[]>();
+    for (const q of onlyRunning ? [this.runningTasks] : [this.queue, this.runningTasks]) {
+      for (const task of q) {
+        for (const tag of task.tags) {
+          const list = result.get(tag)
+          if (!list) {
+            result.set(tag, [task]);
+          } else {
+            list.push(task)
+          }
+        }
+      }
+    }
+    return result;
   }
 }
 
-main().catch(console.error);
+// Usage example
+// async function main() {
+//   const manager = new TaskRunner<"foo" | "bar">({
+//     concurrencyLevel: 20,
+//     logRunnerStart: true,
+//     logRunnerEnd: true,
+//     logTaskStart: true,
+//     logTaskEnd: true,
+//   });
+
+//   const task1 = manager.addTask({
+//     title: "Task 1",
+//     tags: ["foo"],
+//   }, async () => {
+//     await new Promise(resolve => setTimeout(resolve, 500));
+//   });
+
+//   const task2 = manager.addTask({
+//     title: "Task 2",
+//     tags: ["foo"],
+//   }, async () => {
+//     await new Promise(resolve => setTimeout(resolve, 750));
+//     // throw new Error("Task 2 failed");
+//   });
+
+//   const task3 = manager.addTask({
+//     title: "Task 3",
+//     dependentTags: ["foo", "bar"],
+//   }, async () => {
+//     await new Promise(resolve => setTimeout(resolve, 250));
+//   });
+
+//   const task4 = manager.addTask({
+//     title: "Task 4",
+//     tags: ["bar"],
+//     dependentTags: ["foo"],
+//   }, async () => {
+//     await new Promise(resolve => setTimeout(resolve, 1));
+//   });
+
+//   // task1.addDependentTask(task3);
+//   // task2.addDependentTask(task3);
+
+//   await manager.run();
+
+//   if (manager.error) {
+//     console.error("An error occurred:", manager.error);
+//   } else {
+//     console.log("All tasks completed successfully");
+//   }
+// }
+
+// main().catch(console.error);
