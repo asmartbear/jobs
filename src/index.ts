@@ -11,12 +11,17 @@ export enum TaskState {
   Error
 }
 
+/**
+ * Use to send status update messages about the task; will be ignored if not in verbose mode.
+ */
+export type TaskUpdateFunction = (msg: string) => void;
+
 export type TaskRunnerConstructor<Tags extends string> = {
 
   /**
    * Use the console to show status of running jobs?
    */
-  showStatus: boolean,
+  showStatus?: boolean,
 
   /**
    * The total concurrency level, or undefined to use the number of CPUs available.
@@ -98,7 +103,7 @@ export class Task<Tags extends string> {
    */
   public state: TaskState = TaskState.New;
 
-  constructor(config: TaskConstructor<Tags>, private readonly executionFunction: () => Promise<void>) {
+  constructor(config: TaskConstructor<Tags>, private readonly executionFunction: (fStatus: TaskUpdateFunction) => Promise<void>) {
     this.title = config.title
     this.priority = config.priority ?? 0
     this.completionPriority = config.completionPriority ?? 0
@@ -138,10 +143,10 @@ export class Task<Tags extends string> {
   /**
    * Executes this Task, returning any `Error` thrown, or `null` if nothing was thrown.
    */
-  async execute(): Promise<Error | null> {
+  async execute(fStatus: TaskUpdateFunction): Promise<Error | null> {
     this.state = TaskState.Running;
     try {
-      await this.executionFunction();
+      await this.executionFunction(fStatus);
       this.state = TaskState.Done;
       return null;
     } catch (error) {
@@ -175,9 +180,18 @@ export class TaskRunner<Tags extends string> {
   }
 
   /**
+   * If in verbose mode, updates the status that goes with a specific task
+   */
+  private updateStatus(statusIdx: number, msg: string) {
+    if (this.status) {
+      this.status.update(statusIdx, msg)
+    }
+  }
+
+  /**
    * Enqueues a task to run.
    */
-  addTask<TheseTags extends Tags>(config: TaskConstructor<TheseTags>, executionFunction: () => Promise<void>): Task<TheseTags> {
+  addTask<TheseTags extends Tags>(config: TaskConstructor<TheseTags>, executionFunction: (fStatus: TaskUpdateFunction) => Promise<void>): Task<TheseTags> {
     const task = new Task(config, executionFunction)
     this.queue.push(task);
     return task
@@ -205,9 +219,7 @@ export class TaskRunner<Tags extends string> {
    * Runs one worker until queues are finished.
    */
   private async worker(statusIdx: number): Promise<void> {
-    if (this.status) {
-      this.status.update(statusIdx, "Worker waiting")
-    }
+    this.updateStatus(statusIdx, "👶")
     while (this._error === null && (this.queue.length > 0 || this.runningTasks.length > 0)) {
 
       // Load information about currently-running tasks
@@ -217,22 +229,20 @@ export class TaskRunner<Tags extends string> {
       // Find the next task to run
       const readyTaskIndex = this.queue.findIndex(task => task.isReady(this.config, this.queue, this.runningTasks, unfinishedTasksByTag, runningTasksByTag));
       if (readyTaskIndex === -1) {
+        this.updateStatus(statusIdx, "💤")
         await new Promise(resolve => setTimeout(resolve, 50)); // Wait a beat
         continue;
       }
 
       // Run the task
       const task = this.queue.splice(readyTaskIndex, 1)[0];
-      if (this.status) {
-        this.status.update(statusIdx, `Running: ${task.title}`)
-      }
+      this.updateStatus(statusIdx, `🏃‍♂️ ${task.title}`)
       this.runningTasks.push(task);
       const tStart = Date.now()
-      const error = await task.execute();
+      const error = await task.execute((msg: string) => this.updateStatus(statusIdx, `🏃‍♂️ ${task.title}: ${msg}`));
       const tDuration = Date.now() - tStart
       if (this.status) {
         console.log(`Completed: ${task.title} in ${tDuration}ms ${error ? ` (ERR: ${error.message})` : ""}`)
-        this.status.update(statusIdx, "Worker waiting")
       }
       this.runningTasks = this.runningTasks.filter(t => t !== task);
       this.doneTasks.push(task);
@@ -240,9 +250,8 @@ export class TaskRunner<Tags extends string> {
         this._error = error;
       }
     }
-    if (this.status) {
-      this.status.update(statusIdx, "Worker finished")
-    }
+    this.updateStatus(statusIdx, "✌️")
+
   }
 
   /**
@@ -276,33 +285,37 @@ export class TaskRunner<Tags extends string> {
 }
 
 // Usage example
-async function main() {
-  const manager = new TaskRunner<"foo" | "bar">({
-    concurrencyLevel: 5,
-    showStatus: true,
-    concurrencyPerTag: {
-      'foo': 2,
-    }
-  });
+// async function main() {
+//   const manager = new TaskRunner<"foo" | "bar">({
+//     concurrencyLevel: 5,
+//     showStatus: true,
+//     concurrencyPerTag: {
+//       'foo': 2,
+//     }
+//   });
 
-  for (let i = 0; i < 30; ++i) {
-    const tagged = i % 2 == 1
-    manager.addTask({
-      title: `Task ${i}`,
-      tags: tagged ? ["foo"] : ["bar"],
-      dependentTags: tagged ? [] : ["foo"],
-    }, async () => {
-      await new Promise(resolve => setTimeout(resolve, Math.random() * 2000));
-    });
-  }
+//   for (let i = 0; i < 30; ++i) {
+//     const tagged = i % 2 == 1
+//     manager.addTask({
+//       title: `Task ${i}`,
+//       tags: tagged ? ["foo"] : ["bar"],
+//       dependentTags: tagged ? [] : ["foo"],
+//     }, async (fStatus) => {
+//       fStatus("Wait A")
+//       await new Promise(resolve => setTimeout(resolve, Math.random() * 1000));
+//       fStatus("Wait B")
+//       await new Promise(resolve => setTimeout(resolve, Math.random() * 1000));
+//       fStatus("Done")
+//     });
+//   }
 
-  await manager.run();
+//   await manager.run();
 
-  if (manager.error) {
-    console.error("An error occurred:", manager.error);
-  } else {
-    console.log("All tasks completed successfully");
-  }
-}
+//   if (manager.error) {
+//     console.error("An error occurred:", manager.error);
+//   } else {
+//     console.log("All tasks completed successfully");
+//   }
+// }
 
-main().catch(console.error);
+// main().catch(console.error);
