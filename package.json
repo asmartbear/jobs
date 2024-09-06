@@ -39,6 +39,9 @@
     "typescript": "3.8.3",
     "uglify-js": "3.13.8"
   },
+  "dependencies": {
+    "@asmartbear/status": "1.0.3"
+  },
   "license": "MIT",
   "repository": {
     "url": "git@github.com:asmartbear/jobs.git",

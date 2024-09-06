@@ -1,3 +1,4 @@
+import { StatusManager } from '@asmartbear/status';
 import { cpus as getNumCpus } from 'os';
 
 /**
@@ -13,24 +14,9 @@ export enum TaskState {
 export type TaskRunnerConstructor<Tags extends string> = {
 
   /**
-   * Log on the console when the whole runner starts?
+   * Use the console to show status of running jobs?
    */
-  logRunnerStart?: boolean
-
-  /**
-   * Log on the console when the whole runner completes?
-   */
-  logRunnerEnd?: boolean
-
-  /**
-   * Log on the console when a task begins?
-   */
-  logTaskStart?: boolean
-
-  /**
-   * Log on the console when a task completes?
-   */
-  logTaskEnd?: boolean
+  showStatus: boolean,
 
   /**
    * The total concurrency level, or undefined to use the number of CPUs available.
@@ -176,13 +162,16 @@ export class Task<Tags extends string> {
  * A Task-running system.  Load initial tasks; tasks can beget other tasks.  Can run until all are complete.
  */
 export class TaskRunner<Tags extends string> {
+  public readonly concurrencyLevel: number;
+  public readonly status: StatusManager | null;
   private queue: Task<Tags>[] = [];
   private runningTasks: Task<Tags>[] = [];
   private doneTasks: Task<Tags>[] = [];
   private _error: Error | null = null;
 
   constructor(public readonly config: TaskRunnerConstructor<Tags>) {
-    // nothing else to do
+    this.concurrencyLevel = config.concurrencyLevel ?? getNumCpus().length;
+    this.status = config.showStatus ? new StatusManager(this.concurrencyLevel) : null
   }
 
   /**
@@ -200,13 +189,14 @@ export class TaskRunner<Tags extends string> {
    */
   async run(): Promise<void> {
     const tStart = Date.now();
-    const concurrencyLevel = this.config.concurrencyLevel ?? getNumCpus().length;
-    if (this.config.logRunnerStart) {
-      console.log(`Jobs starting; pid=${process.pid}; concurrency=${concurrencyLevel}`);
+    if (this.status) {
+      console.log(`Jobs starting; pid=${process.pid}; concurrency=${this.concurrencyLevel}`);
+      this.status.start()
     }
-    const workers = Array(concurrencyLevel).fill(null).map(() => this.worker());
+    const workers = Array(this.concurrencyLevel).fill(null).map((_, i) => this.worker(i));
     await Promise.all(workers);
-    if (this.config.logRunnerEnd) {
+    if (this.status) {
+      this.status.stop()
       console.log(`Jobs finished; pid=${process.pid}; ${this.doneTasks.length} tasks completed in ${Math.ceil((Date.now() - tStart) / 1000)}s`);
     }
   }
@@ -214,7 +204,10 @@ export class TaskRunner<Tags extends string> {
   /**
    * Runs one worker until queues are finished.
    */
-  private async worker(): Promise<void> {
+  private async worker(statusIdx: number): Promise<void> {
+    if (this.status) {
+      this.status.update(statusIdx, "Worker waiting")
+    }
     while (this._error === null && (this.queue.length > 0 || this.runningTasks.length > 0)) {
 
       // Load information about currently-running tasks
@@ -230,21 +223,25 @@ export class TaskRunner<Tags extends string> {
 
       // Run the task
       const task = this.queue.splice(readyTaskIndex, 1)[0];
-      if (this.config.logTaskStart) {
-        console.log(`>>> ${task.title}`)
+      if (this.status) {
+        this.status.update(statusIdx, `Running: ${task.title}`)
       }
       this.runningTasks.push(task);
       const tStart = Date.now()
       const error = await task.execute();
       const tDuration = Date.now() - tStart
-      if (this.config.logTaskEnd) {
-        console.log(`<<< ${task.title} in ${tDuration}ms ${error ? ` (ERR: ${error.message})` : ""}`);
+      if (this.status) {
+        console.log(`Completed: ${task.title} in ${tDuration}ms ${error ? ` (ERR: ${error.message})` : ""}`)
+        this.status.update(statusIdx, "Worker waiting")
       }
       this.runningTasks = this.runningTasks.filter(t => t !== task);
       this.doneTasks.push(task);
       if (error) {
         this._error = error;
       }
+    }
+    if (this.status) {
+      this.status.update(statusIdx, "Worker finished")
     }
   }
 
@@ -279,55 +276,33 @@ export class TaskRunner<Tags extends string> {
 }
 
 // Usage example
-// async function main() {
-//   const manager = new TaskRunner<"foo" | "bar">({
-//     concurrencyLevel: 20,
-//     logRunnerStart: true,
-//     logRunnerEnd: true,
-//     logTaskStart: true,
-//     logTaskEnd: true,
-//     concurrencyPerTag: {
-//       'foo': 2,
-//     }
-//   });
+async function main() {
+  const manager = new TaskRunner<"foo" | "bar">({
+    concurrencyLevel: 5,
+    showStatus: true,
+    concurrencyPerTag: {
+      'foo': 2,
+    }
+  });
 
-//   const task1 = manager.addTask({
-//     title: "Task 1",
-//     tags: ["foo"],
-//   }, async () => {
-//     await new Promise(resolve => setTimeout(resolve, 500));
-//   });
+  for (let i = 0; i < 30; ++i) {
+    const tagged = i % 2 == 1
+    manager.addTask({
+      title: `Task ${i}`,
+      tags: tagged ? ["foo"] : ["bar"],
+      dependentTags: tagged ? [] : ["foo"],
+    }, async () => {
+      await new Promise(resolve => setTimeout(resolve, Math.random() * 2000));
+    });
+  }
 
-//   const task2 = manager.addTask({
-//     title: "Task 2",
-//     tags: ["foo"],
-//   }, async () => {
-//     await new Promise(resolve => setTimeout(resolve, 750));
-//     // throw new Error("Task 2 failed");
-//   });
+  await manager.run();
 
-//   const task3 = manager.addTask({
-//     title: "Task 3",
-//     tags: ["foo"],
-//   }, async () => {
-//     await new Promise(resolve => setTimeout(resolve, 250));
-//   });
+  if (manager.error) {
+    console.error("An error occurred:", manager.error);
+  } else {
+    console.log("All tasks completed successfully");
+  }
+}
 
-//   const task4 = manager.addTask({
-//     title: "Task 4",
-//     tags: ["bar"],
-//   }, async () => {
-//     await new Promise(resolve => setTimeout(resolve, 1));
-//   });
-
-
-//   await manager.run();
-
-//   if (manager.error) {
-//     console.error("An error occurred:", manager.error);
-//   } else {
-//     console.log("All tasks completed successfully");
-//   }
-// }
-
-// main().catch(console.error);
+main().catch(console.error);
