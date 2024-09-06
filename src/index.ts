@@ -168,7 +168,7 @@ export class Task<Tags extends string> {
  */
 export class TaskRunner<Tags extends string> {
   public readonly concurrencyLevel: number;
-  public readonly status: StatusManager | null;
+  public readonly status: StatusManager<number> | null;
   private queue: Task<Tags>[] = [];
   private runningTasks: Task<Tags>[] = [];
   private doneTasks: Task<Tags>[] = [];
@@ -176,7 +176,7 @@ export class TaskRunner<Tags extends string> {
 
   constructor(public readonly config: TaskRunnerConstructor<Tags>) {
     this.concurrencyLevel = config.concurrencyLevel ?? getNumCpus().length;
-    this.status = config.showStatus ? new StatusManager(this.concurrencyLevel) : null
+    this.status = config.showStatus ? new StatusManager() : null
   }
 
   /**
@@ -219,7 +219,7 @@ export class TaskRunner<Tags extends string> {
    * Runs one worker until queues are finished.
    */
   private async worker(statusIdx: number): Promise<void> {
-    this.updateStatus(statusIdx, "👶")
+    let hasDoneAnything = false   // don't emit messages until we have, so we don't take a slot on the command-line
     while (this._error === null && (this.queue.length > 0 || this.runningTasks.length > 0)) {
 
       // Load information about currently-running tasks
@@ -229,12 +229,13 @@ export class TaskRunner<Tags extends string> {
       // Find the next task to run
       const readyTaskIndex = this.queue.findIndex(task => task.isReady(this.config, this.queue, this.runningTasks, unfinishedTasksByTag, runningTasksByTag));
       if (readyTaskIndex === -1) {
-        this.updateStatus(statusIdx, "💤")
+        if (hasDoneAnything) this.updateStatus(statusIdx, "💤")
         await new Promise(resolve => setTimeout(resolve, 50)); // Wait a beat
         continue;
       }
 
       // Run the task
+      hasDoneAnything = true
       const task = this.queue.splice(readyTaskIndex, 1)[0];
       this.updateStatus(statusIdx, `🏃‍♂️ ${task.title}`)
       this.runningTasks.push(task);
@@ -250,8 +251,7 @@ export class TaskRunner<Tags extends string> {
         this._error = error;
       }
     }
-    this.updateStatus(statusIdx, "✌️")
-
+    if (hasDoneAnything) this.updateStatus(statusIdx, "✌️")
   }
 
   /**
