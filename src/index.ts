@@ -24,6 +24,11 @@ export type TaskRunnerConstructor<Tags extends string> = {
   showStatus?: boolean,
 
   /**
+   * In status updates, show the worker index from the list?
+   */
+  showWorkerIdx?: boolean,
+
+  /**
    * The total concurrency level, or undefined to use the number of CPUs available.
    */
   concurrencyLevel?: number,
@@ -243,7 +248,14 @@ export class TaskRunner<Tags extends string> {
       const error = await task.execute((msg: string) => this.updateStatus(statusIdx, `🏃‍♂️ ${task.title}: ${msg}`));
       const tDuration = Date.now() - tStart
       if (this.status) {
-        console.log(`Completed: ${task.title} in ${tDuration}ms ${error ? ` (ERR: ${error.message})` : ""}`)
+        let msg = `Completed: ${task.title} in ${tDuration}ms`
+        if (this.config.showWorkerIdx) {
+          msg += ` by [${statusIdx}]`
+        }
+        if (error) {
+          msg += ` (ERR: ${error.message})`
+        }
+        console.log(msg)
       }
       this.runningTasks = this.runningTasks.filter(t => t !== task);
       this.doneTasks.push(task);
@@ -285,37 +297,38 @@ export class TaskRunner<Tags extends string> {
 }
 
 // Usage example
-// async function main() {
-//   const manager = new TaskRunner<"foo" | "bar">({
-//     concurrencyLevel: 5,
-//     showStatus: true,
-//     concurrencyPerTag: {
-//       'foo': 2,
-//     }
-//   });
+async function main() {
+  const manager = new TaskRunner<"foo" | "bar">({
+    concurrencyLevel: 5,
+    showStatus: true,
+    showWorkerIdx: true,
+    concurrencyPerTag: {
+      'foo': 2,
+    }
+  });
 
-//   for (let i = 0; i < 30; ++i) {
-//     const tagged = i % 2 == 1
-//     manager.addTask({
-//       title: `Task ${i}`,
-//       tags: tagged ? ["foo"] : ["bar"],
-//       dependentTags: tagged ? [] : ["foo"],
-//     }, async (fStatus) => {
-//       fStatus("Wait A")
-//       await new Promise(resolve => setTimeout(resolve, Math.random() * 1000));
-//       fStatus("Wait B")
-//       await new Promise(resolve => setTimeout(resolve, Math.random() * 1000));
-//       fStatus("Done")
-//     });
-//   }
+  for (let i = 0; i < 30; ++i) {
+    const tagged = i % 2 == 1
+    manager.addTask({
+      title: `Task ${i}`,
+      tags: tagged ? ["foo"] : ["bar"],
+      dependentTags: tagged ? [] : ["foo"],
+    }, async (fStatus) => {
+      fStatus("Wait A")
+      await new Promise(resolve => setTimeout(resolve, Math.random() * 1000));
+      fStatus("Wait B")
+      await new Promise(resolve => setTimeout(resolve, Math.random() * 1000));
+      fStatus("Done")
+    });
+  }
 
-//   await manager.run();
+  await manager.run();
 
-//   if (manager.error) {
-//     console.error("An error occurred:", manager.error);
-//   } else {
-//     console.log("All tasks completed successfully");
-//   }
-// }
+  if (manager.error) {
+    console.error("An error occurred:", manager.error);
+  } else {
+    console.log("All tasks completed successfully");
+  }
+}
 
-// main().catch(console.error);
+main().catch(console.error);
