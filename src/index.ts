@@ -297,38 +297,38 @@ export class TaskRunner<Tags extends string> {
 }
 
 // Usage example
-async function main() {
-  const manager = new TaskRunner<"foo" | "bar">({
-    concurrencyLevel: 5,
-    showStatus: true,
-    showWorkerIdx: true,
-    concurrencyPerTag: {
-      'foo': 2,
-    }
-  });
+// async function main() {
+//   const manager = new TaskRunner<"foo" | "bar">({
+//     concurrencyLevel: 5,
+//     showStatus: true,
+//     showWorkerIdx: true,
+//     concurrencyPerTag: {
+//       'foo': 2,
+//     }
+//   });
 
-  for (let i = 0; i < 30; ++i) {
-    const tagged = i % 2 == 1
-    manager.addTask({
-      title: `Task ${i}`,
-      tags: tagged ? ["foo"] : ["bar"],
-      dependentTags: tagged ? [] : ["foo"],
-    }, async (fStatus) => {
-      fStatus("Wait A")
-      await new Promise(resolve => setTimeout(resolve, Math.random() * 1000));
-      fStatus("Wait B")
-      await new Promise(resolve => setTimeout(resolve, Math.random() * 1000));
-      fStatus("Done")
-    });
-  }
+//   for (let i = 0; i < 30; ++i) {
+//     const tagged = i % 2 == 1
+//     manager.addTask({
+//       title: `Task ${i}`,
+//       tags: tagged ? ["foo"] : ["bar"],
+//       dependentTags: tagged ? [] : ["foo"],
+//     }, async (fStatus) => {
+//       fStatus("Wait A")
+//       await new Promise(resolve => setTimeout(resolve, Math.random() * 1000));
+//       fStatus("Wait B")
+//       await new Promise(resolve => setTimeout(resolve, Math.random() * 1000));
+//       fStatus("Done")
+//     });
+//   }
 
-  await manager.run();
+//   await manager.run();
 
-  if (manager.error) {
-    console.error("An error occurred:", manager.error);
-  } else {
-    console.log("All tasks completed successfully");
-  }
-}
+//   if (manager.error) {
+//     console.error("An error occurred:", manager.error);
+//   } else {
+//     console.log("All tasks completed successfully");
+//   }
+// }
 
-main().catch(console.error);
+// main().catch(console.error);
