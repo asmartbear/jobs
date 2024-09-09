@@ -1,6 +1,6 @@
 {
   "name": "@asmartbear/jobs",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "description": "Simple job-runner with priorities, dependencies, and tag-groups",
   "keywords": [
     "jobs",
