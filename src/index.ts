@@ -97,29 +97,26 @@ export class Task<Tags extends string> {
     }
   }
 
-  isReady(config: TaskRunnerConstructor<Tags>, numQueuedTasksByTag: Map<Tags, number>, numRunningTasksByTag: Map<Tags, number>): boolean {
+  /**
+   * True if this task is ready to run now, based on any configuration or rules, which can even be dynamic.
+   */
+  isReady(runner: TaskRunner<Tags>): boolean {
 
     // Have to be "new" to be ready
     if (this.state !== TaskState.New) return false;
 
-    // Check task list dependency
+    // If any task we're dependent on isn't done, we're not ready
     if (this.dependentTasks.some(task => task.state !== TaskState.Done)) return false;
-
-    // Check weight dependency against ready queue
-    // if (readyQueue.some(task => task.priority < this.priority || task.priority < this.completionPriority)) return false;
-
-    // Check completion weight dependency against running tasks
-    // if (runningTasks.some(task => task.priority < this.completionPriority)) return false;
 
     // Check tag-based completion dependency
     if (this.dependentTags.some(tag =>
-      (numQueuedTasksByTag.get(tag) ?? 0) + (numRunningTasksByTag.get(tag) ?? 0) > 0
+      (runner.numQueuedTasksByTag.get(tag) ?? 0) + (runner.numRunningTasksByTag.get(tag) ?? 0) > 0
     )) return false;
 
     // Check concurrency-based tags
     for (const tag of this.tags) {
-      const concurrency = config.concurrencyPerTag?.[tag] ?? 9999;
-      const current = numRunningTasksByTag.get(tag) ?? 0
+      const concurrency = runner.config.concurrencyPerTag?.[tag] ?? 9999;
+      const current = runner.numRunningTasksByTag.get(tag) ?? 0
       if (current >= concurrency) return false;
     }
 
@@ -155,12 +152,38 @@ export class Task<Tags extends string> {
 export class TaskRunner<Tags extends string> {
   public readonly concurrencyLevel: number;
   private readonly status: StatusManager<number> | null;
-  private queue: Task<Tags>[] = [];
+
+  /**
+   * Tasks which were ready to run the last time we checked.  This status can change though!
+   */
+  private readyQueue: Task<Tags>[] = [];
+
+  /**
+   * Tasks which were not ready to run the last time we checked.  This can change at any time!
+   */
+  private waitingQueue: Task<Tags>[] = [];
+
+  /**
+   * Unordered list of tasks that are currently running.
+   */
   private runningTasks: Task<Tags>[] = [];
-  private _error: Error | null = null;
+
+  /**
+   * Number of tasks queued to run, by tag.  Includes both ready and waiting queues.
+   */
+  public numQueuedTasksByTag = new Map<Tags, number>()
+
+  /**
+   * Number of tasks currently running, by tag.
+   */
+  public numRunningTasksByTag = new Map<Tags, number>()
+
+  /**
+   * Total number of tasks that were running, and completed.  Whether successfully or with error.
+   */
   private numTasksCompleted = 0
-  private numQueuedTasksByTag = new Map<Tags, number>()
-  private numRunningTasksByTag = new Map<Tags, number>()
+
+  private _error: Error | null = null;
 
   constructor(public readonly config: TaskRunnerConstructor<Tags>) {
     this.concurrencyLevel = config.concurrencyLevel ?? getNumCpus().length;
@@ -188,10 +211,10 @@ export class TaskRunner<Tags extends string> {
   /**
    * Enqueues a task to run.
    */
-  addTask<TheseTags extends Tags>(config: TaskConstructor<TheseTags>, executionFunction: (fStatus: TaskUpdateFunction) => Promise<void>): Task<TheseTags> {
-    const task = new Task(config, executionFunction)
-    this.queue.push(task);
-    TaskRunner.updateTagCounter(task, this.numQueuedTasksByTag, 1)
+  addTask(config: TaskConstructor<Tags>, executionFunction: (fStatus: TaskUpdateFunction) => Promise<void>): Task<Tags> {
+    const task = new Task(config, executionFunction);
+    TaskRunner.updateTagCounter(task, this.numQueuedTasksByTag, 1);
+    (task.isReady(this) ? this.readyQueue : this.waitingQueue).push(task);    // start on the appropriate queue
     return task
   }
 
@@ -218,27 +241,42 @@ export class TaskRunner<Tags extends string> {
    */
   private async worker(statusIdx: number): Promise<void> {
     let hasDoneAnything = false   // don't emit messages until we've actually done something, so we don't take a slot on the command-line
-    while (this._error === null && (this.queue.length > 0 || this.runningTasks.length > 0)) {
+    while (this._error === null && (this.readyQueue.length > 0 || this.waitingQueue.length > 0 || this.runningTasks.length > 0)) {
 
-      // Find the next runnable task
-      const readyTaskIndex = this.queue.findIndex(task => task.isReady(this.config, this.numQueuedTasksByTag, this.numRunningTasksByTag));
-      if (readyTaskIndex === -1) {
+      // Grab the next task that's ready to run.
+      // If there isn't one (race condition!), wait a bit and try again.
+      const task = this.readyQueue.shift()
+      if (!task) {
         // console.log("wait")
         if (hasDoneAnything) this.updateStatus(statusIdx, "💤")
-        await new Promise(resolve => setTimeout(resolve, 50)); // Wait a beat
-        continue;
+        await new Promise(resolve => setTimeout(resolve, 50));    // Wait a beat
+        continue
       }
 
-      // Run the task
+      // It's also possible that the task became unready while it was queued to run.
+      // Check for this case, and if so, put it back in the waiting queue and loop around to get another.
+      if (!task.isReady(this)) {
+        // console.log("became unready")
+        this.waitingQueue.push(task)
+        continue
+      }
+
+      // Prepare stats and lists for running the task
       hasDoneAnything = true
-      const task = this.queue.splice(readyTaskIndex, 1)[0];
       this.updateStatus(statusIdx, `🏃‍♂️ ${task.title}`)
       this.runningTasks.push(task);
       TaskRunner.updateTagCounter(task, this.numQueuedTasksByTag, -1)
       TaskRunner.updateTagCounter(task, this.numRunningTasksByTag, 1)
+
+      // Execute the task
       const tStart = Date.now()
       const error = await task.execute((msg: string) => this.updateStatus(statusIdx, `🏃‍♂️ ${task.title}: ${msg}`));
       const tDuration = Date.now() - tStart
+
+      // Update stats and lists
+      this.runningTasks = this.runningTasks.filter(t => t !== task);
+      TaskRunner.updateTagCounter(task, this.numRunningTasksByTag, -1)
+      ++this.numTasksCompleted
 
       // Emit completion message
       if (this.status) {
@@ -251,15 +289,20 @@ export class TaskRunner<Tags extends string> {
         }
         console.log(msg)
       }
-
-      // Remove from running list
-      this.runningTasks = this.runningTasks.filter(t => t !== task);
-      TaskRunner.updateTagCounter(task, this.numRunningTasksByTag, -1)
-      ++this.numTasksCompleted
       if (error) {
         this._error = error;
       }
+
+      // Whenever a task completes, it's possible that some waiting tasks are now ready.
+      // Find as many as we can and move them to the ready queue.
+      for (var i = this.waitingQueue.length; --i >= 0;) {   // count backwards so we can remove items as we go
+        if (this.waitingQueue[i].isReady(this)) {
+          this.readyQueue.push(...this.waitingQueue.splice(i, 1))   // move from one list to the other
+        }
+      }
     }
+
+    // Bye bye message!
     if (hasDoneAnything) this.updateStatus(statusIdx, "✌️")
   }
 
