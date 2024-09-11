@@ -183,11 +183,31 @@ export class TaskRunner<Tags extends string> {
    */
   private numTasksCompleted = 0
 
+  /**
+   * Sempahore for the ready queue.
+   */
+  private readySemaphore = new Semaphore(0)
+
   private _error: Error | null = null;
 
   constructor(public readonly config: TaskRunnerConstructor<Tags>) {
     this.concurrencyLevel = config.concurrencyLevel ?? getNumCpus().length;
     this.status = config.showStatus ? new StatusManager() : null
+  }
+
+  /**
+   * Enqueues a task to run.
+   */
+  addTask(config: TaskConstructor<Tags>, executionFunction: (fStatus: TaskUpdateFunction) => Promise<void>): Task<Tags> {
+    const task = new Task(config, executionFunction);
+    TaskRunner.updateTagCounter(task, this.numQueuedTasksByTag, 1);
+    // Add to the appropriate queue
+    if (task.isReady(this)) {
+      this.addToReady(task)
+    } else {
+      this.waitingQueue.push(task)
+    }
+    return task
   }
 
   /**
@@ -209,13 +229,11 @@ export class TaskRunner<Tags extends string> {
   }
 
   /**
-   * Enqueues a task to run.
+   * Adds the given task to the ready queue, which also releases the semaphore.
    */
-  addTask(config: TaskConstructor<Tags>, executionFunction: (fStatus: TaskUpdateFunction) => Promise<void>): Task<Tags> {
-    const task = new Task(config, executionFunction);
-    TaskRunner.updateTagCounter(task, this.numQueuedTasksByTag, 1);
-    (task.isReady(this) ? this.readyQueue : this.waitingQueue).push(task);    // start on the appropriate queue
-    return task
+  private addToReady(task: Task<Tags>) {
+    this.readyQueue.push(task)
+    this.readySemaphore.release()
   }
 
   /**
@@ -223,16 +241,23 @@ export class TaskRunner<Tags extends string> {
    * Once finished, check `this.error` for whether there were problems.
    */
   async run(): Promise<void> {
-    const tStart = Date.now();
+
+    // Announce the start
     if (this.status) {
       console.log(`Jobs starting; pid=${process.pid}; concurrency=${this.concurrencyLevel}`);
       this.status.start()
     }
+
+    // Execute and time all workers
+    const tStart = Date.now();
     const workers = Array(this.concurrencyLevel).fill(null).map((_, i) => this.worker(i));
     await Promise.all(workers);
+    const tEnd = Date.now();
+
+    // Announce the end
     if (this.status) {
       this.status.stop()
-      console.log(`Jobs finished; pid=${process.pid}; ${this.numTasksCompleted} tasks completed in ${Math.ceil((Date.now() - tStart) / 1000)}s`);
+      console.log(`Jobs finished; pid=${process.pid}; ${this.numTasksCompleted} tasks completed in ${Math.ceil((tEnd - tStart) / 1000)}s`);
     }
   }
 
@@ -241,29 +266,46 @@ export class TaskRunner<Tags extends string> {
    */
   private async worker(statusIdx: number): Promise<void> {
     let hasDoneAnything = false   // don't emit messages until we've actually done something, so we don't take a slot on the command-line
+    // Our own status function that only updates status if we've done something, and uses our worker index as a key
+    const fStatus = (msg: string) => (hasDoneAnything && this.updateStatus(statusIdx, msg))
     while (this._error === null && (this.readyQueue.length > 0 || this.waitingQueue.length > 0 || this.runningTasks.length > 0)) {
 
+      try {
+        // Wait to acquire the semaphore, which means something is ready to run.
+        if (this.readySemaphore.isLocked()) {
+          // If we believe we'll be waiting, it's worth updating the status.
+          // Otherwise, we're about to run something, so don't bother flickering the screen.
+          fStatus("💤")
+        }
+        await this.readySemaphore.acquire()
+      } catch (err) {
+        if (err === E_CANCELED) {
+          // Expected!  This is the end of the job queue, and we've been awoken so we can exit normally
+          break
+        }
+        throw err     // unexpected!
+      }
+
       // Grab the next task that's ready to run.
-      // If there isn't one (race condition!), wait a bit and try again.
+      // There should always be one because of the semaphore, but just in case, check, and loop around and wait if not.
       const task = this.readyQueue.shift()
       if (!task) {
-        // console.log("wait")
-        if (hasDoneAnything) this.updateStatus(statusIdx, "💤")
-        await new Promise(resolve => setTimeout(resolve, 50));    // Wait a beat
-        continue
+        // console.log("WAIT???")
+        fStatus("💤")
+        continue    // will either exit the loop or wait for the semaphore again
       }
 
       // It's also possible that the task became unready while it was queued to run.
       // Check for this case, and if so, put it back in the waiting queue and loop around to get another.
       if (!task.isReady(this)) {
         // console.log("became unready")
-        this.waitingQueue.push(task)
+        this.waitingQueue.unshift(task)
         continue
       }
 
       // Prepare stats and lists for running the task
       hasDoneAnything = true
-      this.updateStatus(statusIdx, `🏃‍♂️ ${task.title}`)
+      fStatus(`🏃‍♂️ ${task.title}`)
       this.runningTasks.push(task);
       TaskRunner.updateTagCounter(task, this.numQueuedTasksByTag, -1)
       TaskRunner.updateTagCounter(task, this.numRunningTasksByTag, 1)
@@ -297,13 +339,18 @@ export class TaskRunner<Tags extends string> {
       // Find as many as we can and move them to the ready queue.
       for (var i = this.waitingQueue.length; --i >= 0;) {   // count backwards so we can remove items as we go
         if (this.waitingQueue[i].isReady(this)) {
-          this.readyQueue.push(...this.waitingQueue.splice(i, 1))   // move from one list to the other
+          this.addToReady(this.waitingQueue.splice(i, 1)[0])
         }
       }
     }
 
     // Bye bye message!
-    if (hasDoneAnything) this.updateStatus(statusIdx, "✌️")
+    fStatus("✌️")
+
+    // Got here because we're totally done.
+    // Some workers might still be going; that's fine.
+    // Wake the remaining ones so they can exit normally
+    this.readySemaphore.cancel()
   }
 
   /**
