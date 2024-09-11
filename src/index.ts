@@ -154,8 +154,8 @@ export class TaskRunner<Tags extends string> {
   public readonly status: StatusManager<number> | null;
   private queue: Task<Tags>[] = [];
   private runningTasks: Task<Tags>[] = [];
-  private doneTasks: Task<Tags>[] = [];
   private _error: Error | null = null;
+  private _numCompleted = 0
 
   constructor(public readonly config: TaskRunnerConstructor<Tags>) {
     this.concurrencyLevel = config.concurrencyLevel ?? getNumCpus().length;
@@ -194,7 +194,7 @@ export class TaskRunner<Tags extends string> {
     await Promise.all(workers);
     if (this.status) {
       this.status.stop()
-      console.log(`Jobs finished; pid=${process.pid}; ${this.doneTasks.length} tasks completed in ${Math.ceil((Date.now() - tStart) / 1000)}s`);
+      console.log(`Jobs finished; pid=${process.pid}; ${this._numCompleted} tasks completed in ${Math.ceil((Date.now() - tStart) / 1000)}s`);
     }
   }
 
@@ -202,7 +202,7 @@ export class TaskRunner<Tags extends string> {
    * Runs one worker until queues are finished.
    */
   private async worker(statusIdx: number): Promise<void> {
-    let hasDoneAnything = false   // don't emit messages until we have, so we don't take a slot on the command-line
+    let hasDoneAnything = false   // don't emit messages until we've actually done something, so we don't take a slot on the command-line
     while (this._error === null && (this.queue.length > 0 || this.runningTasks.length > 0)) {
 
       // Load information about currently-running tasks
@@ -226,6 +226,8 @@ export class TaskRunner<Tags extends string> {
       const tStart = Date.now()
       const error = await task.execute((msg: string) => this.updateStatus(statusIdx, `🏃‍♂️ ${task.title}: ${msg}`));
       const tDuration = Date.now() - tStart
+
+      // Emit completion message
       if (this.status) {
         let msg = `Completed: ${task.title} in ${tDuration}ms`
         if (this.config.showWorkerIdx) {
@@ -236,8 +238,10 @@ export class TaskRunner<Tags extends string> {
         }
         console.log(msg)
       }
+
+      // Remove from running list
       this.runningTasks = this.runningTasks.filter(t => t !== task);
-      this.doneTasks.push(task);
+      ++this._numCompleted
       if (error) {
         this._error = error;
       }
