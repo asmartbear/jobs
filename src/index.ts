@@ -1,5 +1,6 @@
 import { StatusManager } from '@asmartbear/status';
 import { cpus as getNumCpus } from 'os';
+import { Semaphore, E_CANCELED } from 'async-mutex';
 
 /**
  * Task execution state.  Goes from `New` to `Running` to `Done` or `Error`.
@@ -50,17 +51,6 @@ export type TaskConstructor<Tags extends string> = {
   title: string,
 
   /**
-   * Tasks will run in priority-order, from lowest to highest, though different priorities can be running concurrently.
-   */
-
-  priority?: number,
-
-  /**
-   * Don't start this task unless all tasks with a lower completionPriority have not only started, but finished.
-   */
-  completionPriority?: number,
-
-  /**
    * Tags to apply to this task.
    */
   tags?: Tags[]
@@ -82,16 +72,6 @@ export class Task<Tags extends string> {
   public readonly title: string
 
   /**
-   * Tasks will run in priority-order, from lowest to highest, though different priorities can be running concurrently.
-   */
-  public readonly priority: number
-
-  /**
-   * Don't start this task unless all tasks with a lower completionPriority have not only started, but finished.
-   */
-  public readonly completionPriority: number
-
-  /**
    * Tags that are applied to this task.
    */
   public readonly tags: Tags[]
@@ -110,8 +90,6 @@ export class Task<Tags extends string> {
 
   constructor(config: TaskConstructor<Tags>, private readonly executionFunction: (fStatus: TaskUpdateFunction) => Promise<void>) {
     this.title = config.title
-    this.priority = config.priority ?? 0
-    this.completionPriority = config.completionPriority ?? 0
     this.tags = config.tags ?? []
     this.dependentTags = config.dependentTags ?? []
     if (this.tags.length > 0) {
@@ -128,10 +106,10 @@ export class Task<Tags extends string> {
     if (this.dependentTasks.some(task => task.state !== TaskState.Done)) return false;
 
     // Check weight dependency against ready queue
-    if (readyQueue.some(task => task.priority < this.priority || task.priority < this.completionPriority)) return false;
+    // if (readyQueue.some(task => task.priority < this.priority || task.priority < this.completionPriority)) return false;
 
     // Check completion weight dependency against running tasks
-    if (runningTasks.some(task => task.priority < this.completionPriority)) return false;
+    // if (runningTasks.some(task => task.priority < this.completionPriority)) return false;
 
     // Check tag-based completion dependency
     if (this.dependentTags.some(tag => (unfinishedTasksByTag.get(tag) ?? []).length > 0)) return false;
@@ -234,6 +212,7 @@ export class TaskRunner<Tags extends string> {
       // Find the next task to run
       const readyTaskIndex = this.queue.findIndex(task => task.isReady(this.config, this.queue, this.runningTasks, unfinishedTasksByTag, runningTasksByTag));
       if (readyTaskIndex === -1) {
+        // console.log("wait")
         if (hasDoneAnything) this.updateStatus(statusIdx, "💤")
         await new Promise(resolve => setTimeout(resolve, 50)); // Wait a beat
         continue;
@@ -299,15 +278,15 @@ export class TaskRunner<Tags extends string> {
 // Usage example
 // async function main() {
 //   const manager = new TaskRunner<"foo" | "bar">({
-//     concurrencyLevel: 5,
+//     concurrencyLevel: 6,
 //     showStatus: true,
 //     showWorkerIdx: true,
 //     concurrencyPerTag: {
-//       'foo': 2,
+//       'foo': 3,
 //     }
 //   });
 
-//   for (let i = 0; i < 30; ++i) {
+//   for (let i = 0; i < 35; ++i) {
 //     const tagged = i % 2 == 1
 //     manager.addTask({
 //       title: `Task ${i}`,
@@ -315,9 +294,11 @@ export class TaskRunner<Tags extends string> {
 //       dependentTags: tagged ? [] : ["foo"],
 //     }, async (fStatus) => {
 //       fStatus("Wait A")
-//       await new Promise(resolve => setTimeout(resolve, Math.random() * 1000));
+//       await new Promise(resolve => setTimeout(resolve, Math.random() * 500));
 //       fStatus("Wait B")
-//       await new Promise(resolve => setTimeout(resolve, Math.random() * 1000));
+//       await new Promise(resolve => setTimeout(resolve, Math.random() * 500));
+//       fStatus("Wait C")
+//       await new Promise(resolve => setTimeout(resolve, Math.random() * 500));
 //       fStatus("Done")
 //     });
 //   }
