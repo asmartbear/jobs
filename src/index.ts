@@ -97,7 +97,7 @@ export class Task<Tags extends string> {
     }
   }
 
-  isReady(config: TaskRunnerConstructor<Tags>, readyQueue: Task<Tags>[], runningTasks: Task<Tags>[], unfinishedTasksByTag: Map<Tags, Task<Tags>[]>, runningTasksByTag: Map<Tags, Task<Tags>[]>): boolean {
+  isReady(config: TaskRunnerConstructor<Tags>, numQueuedTasksByTag: Map<Tags, number>, numRunningTasksByTag: Map<Tags, number>): boolean {
 
     // Have to be "new" to be ready
     if (this.state !== TaskState.New) return false;
@@ -112,12 +112,15 @@ export class Task<Tags extends string> {
     // if (runningTasks.some(task => task.priority < this.completionPriority)) return false;
 
     // Check tag-based completion dependency
-    if (this.dependentTags.some(tag => (unfinishedTasksByTag.get(tag) ?? []).length > 0)) return false;
+    if (this.dependentTags.some(tag =>
+      (numQueuedTasksByTag.get(tag) ?? 0) + (numRunningTasksByTag.get(tag) ?? 0) > 0
+    )) return false;
 
-    // Check concurrency-based tags-running
+    // Check concurrency-based tags
     for (const tag of this.tags) {
       const concurrency = config.concurrencyPerTag?.[tag] ?? 9999;
-      if ((runningTasksByTag.get(tag) ?? []).length >= concurrency) return false;
+      const current = numRunningTasksByTag.get(tag) ?? 0
+      if (current >= concurrency) return false;
     }
 
     return true;
@@ -151,11 +154,13 @@ export class Task<Tags extends string> {
  */
 export class TaskRunner<Tags extends string> {
   public readonly concurrencyLevel: number;
-  public readonly status: StatusManager<number> | null;
+  private readonly status: StatusManager<number> | null;
   private queue: Task<Tags>[] = [];
   private runningTasks: Task<Tags>[] = [];
   private _error: Error | null = null;
-  private _numCompleted = 0
+  private numTasksCompleted = 0
+  private numQueuedTasksByTag = new Map<Tags, number>()
+  private numRunningTasksByTag = new Map<Tags, number>()
 
   constructor(public readonly config: TaskRunnerConstructor<Tags>) {
     this.concurrencyLevel = config.concurrencyLevel ?? getNumCpus().length;
@@ -172,11 +177,21 @@ export class TaskRunner<Tags extends string> {
   }
 
   /**
+   * Updates the given counter for all the tags in the given task, incrementing by the given amount.
+   */
+  private static updateTagCounter<Tags extends string>(task: Task<Tags>, counter: Map<Tags, number>, increment: number) {
+    for (const tag of task.tags) {
+      counter.set(tag, (counter.get(tag) ?? 0) + increment)
+    }
+  }
+
+  /**
    * Enqueues a task to run.
    */
   addTask<TheseTags extends Tags>(config: TaskConstructor<TheseTags>, executionFunction: (fStatus: TaskUpdateFunction) => Promise<void>): Task<TheseTags> {
     const task = new Task(config, executionFunction)
     this.queue.push(task);
+    TaskRunner.updateTagCounter(task, this.numQueuedTasksByTag, 1)
     return task
   }
 
@@ -194,7 +209,7 @@ export class TaskRunner<Tags extends string> {
     await Promise.all(workers);
     if (this.status) {
       this.status.stop()
-      console.log(`Jobs finished; pid=${process.pid}; ${this._numCompleted} tasks completed in ${Math.ceil((Date.now() - tStart) / 1000)}s`);
+      console.log(`Jobs finished; pid=${process.pid}; ${this.numTasksCompleted} tasks completed in ${Math.ceil((Date.now() - tStart) / 1000)}s`);
     }
   }
 
@@ -205,12 +220,8 @@ export class TaskRunner<Tags extends string> {
     let hasDoneAnything = false   // don't emit messages until we've actually done something, so we don't take a slot on the command-line
     while (this._error === null && (this.queue.length > 0 || this.runningTasks.length > 0)) {
 
-      // Load information about currently-running tasks
-      const runningTasksByTag = this.getTasksByTag(true);
-      const unfinishedTasksByTag = this.getTasksByTag(false);
-
-      // Find the next task to run
-      const readyTaskIndex = this.queue.findIndex(task => task.isReady(this.config, this.queue, this.runningTasks, unfinishedTasksByTag, runningTasksByTag));
+      // Find the next runnable task
+      const readyTaskIndex = this.queue.findIndex(task => task.isReady(this.config, this.numQueuedTasksByTag, this.numRunningTasksByTag));
       if (readyTaskIndex === -1) {
         // console.log("wait")
         if (hasDoneAnything) this.updateStatus(statusIdx, "💤")
@@ -223,6 +234,8 @@ export class TaskRunner<Tags extends string> {
       const task = this.queue.splice(readyTaskIndex, 1)[0];
       this.updateStatus(statusIdx, `🏃‍♂️ ${task.title}`)
       this.runningTasks.push(task);
+      TaskRunner.updateTagCounter(task, this.numQueuedTasksByTag, -1)
+      TaskRunner.updateTagCounter(task, this.numRunningTasksByTag, 1)
       const tStart = Date.now()
       const error = await task.execute((msg: string) => this.updateStatus(statusIdx, `🏃‍♂️ ${task.title}: ${msg}`));
       const tDuration = Date.now() - tStart
@@ -241,7 +254,8 @@ export class TaskRunner<Tags extends string> {
 
       // Remove from running list
       this.runningTasks = this.runningTasks.filter(t => t !== task);
-      ++this._numCompleted
+      TaskRunner.updateTagCounter(task, this.numRunningTasksByTag, -1)
+      ++this.numTasksCompleted
       if (error) {
         this._error = error;
       }
@@ -256,27 +270,6 @@ export class TaskRunner<Tags extends string> {
     return this._error;
   }
 
-  /**
-   * Returns the list of tasks, organized by tag.
-   * 
-   * @param onlyRunning if true, only currently-running, otherwise everything that isn't finished
-   */
-  getTasksByTag(onlyRunning: boolean): Map<Tags, Task<Tags>[]> {
-    const result = new Map<Tags, Task<Tags>[]>();
-    for (const q of onlyRunning ? [this.runningTasks] : [this.queue, this.runningTasks]) {
-      for (const task of q) {
-        for (const tag of task.tags) {
-          const list = result.get(tag)
-          if (!list) {
-            result.set(tag, [task]);
-          } else {
-            list.push(task)
-          }
-        }
-      }
-    }
-    return result;
-  }
 }
 
 // Usage example
