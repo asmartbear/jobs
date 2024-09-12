@@ -59,6 +59,11 @@ export type TaskConstructor<Tags extends string> = {
    * If there are tasks tagged with any of these, we wait for them to complete before we can run.
    */
   dependentTags?: Tags[]
+
+  /**
+   * Tasks that must complete before this one can run.
+   */
+  dependentTasks?: Task<Tags>[]
 }
 
 /**
@@ -79,8 +84,11 @@ export class Task<Tags extends string> {
   /**
    * If there are tasks tagged with any of these, we wait for them to complete before we can run.
    */
-  public readonly dependentTags: Tags[]
+  private readonly dependentTags: Tags[]
 
+  /**
+   * Tasks that must complete before this one can run.
+   */
   private readonly dependentTasks: Task<Tags>[] = [];
 
   /**
@@ -92,6 +100,7 @@ export class Task<Tags extends string> {
     this.title = config.title
     this.tags = config.tags ?? []
     this.dependentTags = config.dependentTags ?? []
+    this.dependentTasks = config.dependentTasks ?? []
     if (this.tags.length > 0) {
       this.title += " [" + this.tags.join(", ") + "]"
     }
@@ -373,12 +382,19 @@ export class TaskRunner<Tags extends string> {
 //     }
 //   });
 
+//   const mainTask = manager.addTask({
+//     title: "THE MAIN ONE",
+//   }, async () => {
+//     await new Promise(resolve => setTimeout(resolve, 1000));
+//   })
+
 //   for (let i = 0; i < 35; ++i) {
 //     const tagged = i % 2 == 1
 //     manager.addTask({
 //       title: `Task ${i}`,
 //       tags: tagged ? ["foo"] : ["bar"],
 //       dependentTags: tagged ? [] : ["foo"],
+//       dependentTasks: [mainTask],
 //     }, async (fStatus) => {
 //       fStatus("Wait A")
 //       await new Promise(resolve => setTimeout(resolve, Math.random() * 500));

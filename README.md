@@ -38,14 +38,8 @@ Unit tests, refreshed live:
 npm run watch
 ```
 
-Prepare for release (e.g. run tests and bump version number):
+Prepare for release (e.g. run tests and bump version number), then publish to npm:
 
 ```bash
-npm run release
-```
-
-Publish to npm:
-
-```bash
-npm publish
+npm run release && npm publish
 ```
