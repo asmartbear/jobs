@@ -286,7 +286,7 @@ export class TaskRunner<Tags extends string> {
           // Otherwise, we're about to run something, so don't bother flickering the screen.
           fStatus("💤")
         }
-        await this.readySemaphore.acquire()
+        await this.readySemaphore.acquire(1, -statusIdx)   // prioritize existing workers so we don't create more slots than actually needed
       } catch (err) {
         if (err === E_CANCELED) {
           // Expected!  This is the end of the job queue, and we've been awoken so we can exit normally
@@ -300,7 +300,6 @@ export class TaskRunner<Tags extends string> {
       const task = this.readyQueue.shift()
       if (!task) {
         // console.log("WAIT???")
-        fStatus("💤")
         continue    // will either exit the loop or wait for the semaphore again
       }
 
