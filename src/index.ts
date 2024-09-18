@@ -160,7 +160,7 @@ export class Task<Tags extends string> {
  */
 export class TaskRunner<Tags extends string> {
   public readonly concurrencyLevel: number;
-  private readonly status: StatusManager<number> | null;
+  private status: StatusManager<number> | null;
 
   /**
    * Tasks which were ready to run the last time we checked.  This status can change though!
@@ -202,6 +202,19 @@ export class TaskRunner<Tags extends string> {
   constructor(public readonly config: TaskRunnerConstructor<Tags>) {
     this.concurrencyLevel = config.concurrencyLevel ?? getNumCpus().length;
     this.status = config.showStatus ? new StatusManager() : null
+  }
+
+  /**
+   * Turns status on or off after creation.  Does nothing if it's already in that state.
+   */
+  statusControl(isEnabled: boolean) {
+    if (isEnabled && !this.status) {
+      this.status = new StatusManager();
+      this.status.start()
+    } else if (!isEnabled && this.status) {
+      this.status.stop();
+      this.status = null;
+    }
   }
 
   /**
