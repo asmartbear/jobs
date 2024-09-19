@@ -1,6 +1,6 @@
 import { StatusManager } from '@asmartbear/status';
 import { cpus as getNumCpus } from 'os';
-import { Semaphore, E_CANCELED } from 'async-mutex';
+import { Semaphore, E_CANCELED, Mutex } from 'async-mutex';
 
 /**
  * Task execution state.  Goes from `New` to `Running` to `Done` or `Error`.
@@ -102,6 +102,11 @@ export class Task<Tags extends string> {
    */
   public state: TaskState = TaskState.New;
 
+  /**
+   * Used to signal waiting threads that this task has completed.
+   */
+  private readonly completionMutex = new Mutex()
+
   constructor(config: TaskConstructor<Tags>, private readonly executionFunction: TaskExecutionFunction) {
     this.title = config.title
     this.tags = config.tags ?? []
@@ -110,6 +115,7 @@ export class Task<Tags extends string> {
     if (this.tags.length > 0) {
       this.title += " [" + this.tags.join(", ") + "]"
     }
+    this.completionMutex.acquire()    // by taking the mutex, every other thread will block if they attempt to acquire it.
   }
 
   /**
@@ -150,7 +156,21 @@ export class Task<Tags extends string> {
     } catch (error) {
       this.state = TaskState.Error;
       return error as Error;
+    } finally {
+      this.completionMutex.release()    // release anyone waiting for this task to complete
     }
+  }
+
+  /**
+   * Waits for this task to complete, or returns immediately if the task was already complete.
+   * 
+   * @returns `this` for chaining.
+   */
+  async waitForCompletion(): Promise<Task<Tags>> {
+    if (this.state == TaskState.Done || this.state == TaskState.Error) return this    // already complete
+    await this.completionMutex.acquire()    // wait
+    this.completionMutex.release()    // let the next thread see the signal
+    return this
   }
 
   /**
@@ -406,9 +426,10 @@ export class TaskRunner<Tags extends string> {
 //     await new Promise(resolve => setTimeout(resolve, 1000));
 //   })
 
+//   const the20s: Task<"foo" | "bar">[] = []
 //   for (let i = 0; i < 35; ++i) {
 //     const tagged = i % 2 == 1
-//     manager.addTask({
+//     const task = manager.addTask({
 //       title: `Task ${i}`,
 //       tags: tagged ? ["foo"] : ["bar"],
 //       dependentTags: tagged ? [] : ["foo"],
@@ -422,9 +443,15 @@ export class TaskRunner<Tags extends string> {
 //       await new Promise(resolve => setTimeout(resolve, Math.random() * 500));
 //       fStatus("Done")
 //     });
+//     if (i >= 20 && i < 30) {
+//       the20s.push(task)
+//     }
 //   }
 
-//   await manager.run();
+//   await Promise.all([
+//     manager.run(),
+//     Promise.all(the20s.map(task => task.waitForCompletion())).then(() => console.log("the 20s are done")),
+//   ]);
 
 //   if (manager.error) {
 //     console.error("An error occurred:", manager.error);
