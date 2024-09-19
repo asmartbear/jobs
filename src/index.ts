@@ -17,6 +17,12 @@ export enum TaskState {
  */
 export type TaskUpdateFunction = (msg: string) => void;
 
+/**
+ * Task execution function.  This is the function that actually does the work of the task.
+ * We don't care about the return value, but we do care if it's wrapped in a Promise, but still don't care what the promise resolves to.
+ */
+export type TaskExecutionFunction = (fStatus: TaskUpdateFunction) => Promise<unknown> | unknown;
+
 export type TaskRunnerConstructor<Tags extends string> = {
 
   /**
@@ -96,7 +102,7 @@ export class Task<Tags extends string> {
    */
   public state: TaskState = TaskState.New;
 
-  constructor(config: TaskConstructor<Tags>, private readonly executionFunction: (fStatus: TaskUpdateFunction) => Promise<void>) {
+  constructor(config: TaskConstructor<Tags>, private readonly executionFunction: TaskExecutionFunction) {
     this.title = config.title
     this.tags = config.tags ?? []
     this.dependentTags = config.dependentTags ?? []
@@ -220,7 +226,7 @@ export class TaskRunner<Tags extends string> {
   /**
    * Enqueues a task to run.
    */
-  addTask(config: TaskConstructor<Tags>, executionFunction: (fStatus: TaskUpdateFunction) => Promise<void>): Task<Tags> {
+  addTask(config: TaskConstructor<Tags>, executionFunction: TaskExecutionFunction): Task<Tags> {
     const task = new Task(config, executionFunction);
     TaskRunner.updateTagCounter(task, this.numQueuedTasksByTag, 1);
     // Add to the appropriate queue
