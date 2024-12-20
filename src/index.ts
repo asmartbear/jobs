@@ -164,7 +164,7 @@ export class Task<Tags extends string> {
   /**
    * Waits for this task to complete, or returns immediately if the task was already complete.
    * 
-   * @returns `this` for chaining.
+   * @returns `this` for chaining, but as a Promise because generally we're waiting for the completion.
    */
   async waitForCompletion(): Promise<Task<Tags>> {
     if (this.state == TaskState.Done || this.state == TaskState.Error) return this    // already complete
@@ -244,7 +244,7 @@ export class TaskRunner<Tags extends string> {
   }
 
   /**
-   * Enqueues a task to run.
+   * Creates a tag, enqueues it to run, and returns it.
    */
   addTask(config: TaskConstructor<Tags>, executionFunction: TaskExecutionFunction): Task<Tags> {
     const task = new Task(config, executionFunction);
