@@ -6,11 +6,13 @@ Simple job-runner with features:
 * Tasks dependent on specific other tasks being complete
 * Tasks dependent on all tagged tasks being complete
 * Wait for a specific task to complete
+* Optional manual prioritization
 
 ## Execution queue
 
 * All else being equal, tasks are started in the order they were enqueued.
-* Tasks will not start based on:
+* Tasks are started by an optional priority ordering number.
+* Tasks will not start based on (regardless of priority):
     * max running tasks per tag
     * dependency on specific other tasks
     * dependency on all tasks tagged by a given set of tags

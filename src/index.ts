@@ -59,17 +59,23 @@ export type TaskConstructor<Tags extends string> = {
   /**
    * Tags to apply to this task.
    */
-  tags?: Tags[]
+  tags?: Tags[],
 
   /**
    * If there are tasks tagged with any of these, we wait for them to complete before we can run.
    */
-  dependentTags?: Tags[]
+  dependentTags?: Tags[],
 
   /**
    * Tasks that must complete before this one can run.
    */
-  dependentTasks?: Task<Tags>[]
+  dependentTasks?: Task<Tags>[],
+
+  /**
+   * Priority order, lower numbers run first.  Ties are broken arbitrarily.  All numbers are allowed.
+   * If not provided, the effective value is `0`.
+   */
+  priority?: number,
 }
 
 /**
@@ -95,7 +101,12 @@ export class Task<Tags extends string> {
   /**
    * Tasks that must complete before this one can run.
    */
-  private readonly dependentTasks: Task<Tags>[] = [];
+  private readonly dependentTasks: Task<Tags>[]
+
+  /**
+   * Priority order, lower numbers run first.  Ties are broken arbitrarily.  Default is `0`.
+   */
+  public readonly priority: number
 
   /**
    * The current state of the Task.
@@ -112,6 +123,7 @@ export class Task<Tags extends string> {
     this.tags = config.tags ?? []
     this.dependentTags = config.dependentTags ?? []
     this.dependentTasks = config.dependentTasks ?? []
+    this.priority = config.priority ?? 0
     if (this.tags.length > 0) {
       this.title += " [" + this.tags.join(", ") + "]"
     }
@@ -281,6 +293,7 @@ export class TaskRunner<Tags extends string> {
    */
   private addToReady(task: Task<Tags>) {
     this.readyQueue.push(task)
+    this.readyQueue.sort((a, b) => a.priority - b.priority)   // FIXME: Presumably faster to insert after binary search
     this.readySemaphore.release()
   }
 
@@ -434,6 +447,7 @@ export class TaskRunner<Tags extends string> {
 //       tags: tagged ? ["foo"] : ["bar"],
 //       dependentTags: tagged ? [] : ["foo"],
 //       dependentTasks: [mainTask],
+//       priority: i,
 //     }, async (fStatus) => {
 //       fStatus("Wait A")
 //       await new Promise(resolve => setTimeout(resolve, Math.random() * 500));
