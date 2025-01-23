@@ -59,17 +59,17 @@ export type TaskConstructor<Tags extends string> = {
   /**
    * Tags to apply to this task.
    */
-  tags?: Tags[],
+  tags?: readonly Tags[],
 
   /**
    * If there are tasks tagged with any of these, we wait for them to complete before we can run.
    */
-  dependentTags?: Tags[],
+  dependentTags?: readonly Tags[],
 
   /**
    * Tasks that must complete before this one can run.
    */
-  dependentTasks?: Task<Tags>[],
+  dependentTasks?: readonly Task<Tags>[],
 
   /**
    * Priority order, lower numbers run first.  Ties are broken arbitrarily.  All numbers are allowed.
@@ -91,12 +91,12 @@ export class Task<Tags extends string> {
   /**
    * Tags that are applied to this task.
    */
-  public readonly tags: Tags[]
+  public readonly tags: readonly Tags[]
 
   /**
    * If there are tasks tagged with any of these, we wait for them to complete before we can run.
    */
-  private readonly dependentTags: Tags[]
+  private readonly dependentTags: readonly Tags[]
 
   /**
    * Tasks that must complete before this one can run.
@@ -122,7 +122,7 @@ export class Task<Tags extends string> {
     this.title = config.title
     this.tags = config.tags ?? []
     this.dependentTags = config.dependentTags ?? []
-    this.dependentTasks = config.dependentTasks ?? []
+    this.dependentTasks = config.dependentTasks ? Array.from(config.dependentTasks) : []
     this.priority = config.priority ?? 0
     if (this.tags.length > 0) {
       this.title += " [" + this.tags.join(", ") + "]"
