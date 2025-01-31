@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.0.21](https://github.com/asmartbear/jobs/compare/v1.0.20...v1.0.21) (2025-01-31)
+
+
+
 ### [1.0.20](https://github.com/asmartbear/jobs/compare/v1.0.19...v1.0.20) (2025-01-28)
 
 
