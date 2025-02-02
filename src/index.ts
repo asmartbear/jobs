@@ -231,6 +231,11 @@ export class TaskRunner<Tags extends string> {
   private numTasksCompleted = 0
 
   /**
+   * A flag that says we should keep running even if there are no waiting or running tasks.
+   */
+  private stayAlive: boolean = false
+
+  /**
    * Sempahore for the ready queue.
    */
   private readySemaphore = new Semaphore(0)
@@ -240,6 +245,23 @@ export class TaskRunner<Tags extends string> {
   constructor(public readonly config: TaskRunnerConstructor<Tags>) {
     this.concurrencyLevel = config.concurrencyLevel ?? getNumCpus().length;
     this.status = config.showStatus ? new StatusManager() : null
+  }
+
+  /**
+   * Gets the number of tasks registered but not running, either because we haven't started yet,
+   * or they are blocked by dependencies, or they are ready but there's no worker available,
+   * or they are currently running.
+   */
+  get numUnfinishedTasks(): number {
+    return this.waitingQueue.length + this.runningTasks.length + this.readyQueue.length
+  }
+
+  /**
+   * Gets the number of tasks currently running in workers.
+   * Will never be more than the number of workers.
+   */
+  get numRunningTasks(): number {
+    return this.runningTasks.length
   }
 
   /**
@@ -298,6 +320,23 @@ export class TaskRunner<Tags extends string> {
   }
 
   /**
+   * If `true`, the workers will remain running even if there are no jobs left either running or waiting.
+   * This is useful when there can be gaps in adding tasks.  Set to `false` eventually, or the job-runner
+   * will never exit.
+   */
+  public setStayAlive(x: boolean) {
+    this.stayAlive = x
+    if (!x) {
+      // If all workers are waiting because of this flag, and we just cleared it, they need to wake up
+      // so that they can exit. They don't need this if there's more tasks to run, only if this flag
+      // was the _only_ thing keeping them going.
+      if (!this.numUnfinishedTasks) {
+        this.readySemaphore.cancel()
+      }
+    }
+  }
+
+  /**
    * Runs all tasks until completion.  Tasks can add more tasks.
    * Once finished, check `this.error` for whether there were problems.
    */
@@ -318,7 +357,9 @@ export class TaskRunner<Tags extends string> {
     // Announce the end
     if (this.status) {
       this.status.stop()
-      console.log(`Jobs finished; pid=${process.pid}; ${this.numTasksCompleted} tasks completed in ${Math.ceil((tEnd - tStart) / 1000)}s`);
+      const durationMs = tEnd - tStart
+      const durationStr = durationMs < 4000 ? `${durationMs}ms` : `${Math.ceil(durationMs / 1000)}s`
+      console.log(`Jobs finished; pid=${process.pid}; ${this.numTasksCompleted} tasks completed in ${durationStr}`);
     }
   }
 
@@ -329,7 +370,7 @@ export class TaskRunner<Tags extends string> {
     let hasDoneAnything = false   // don't emit messages until we've actually done something, so we don't take a slot on the command-line
     // Our own status function that only updates status if we've done something, and uses our worker index as a key
     const fStatus = (msg: string) => (hasDoneAnything && this.updateStatus(statusIdx, msg))
-    while (this._error === null && (this.readyQueue.length > 0 || this.waitingQueue.length > 0 || this.runningTasks.length > 0)) {
+    while (this._error === null && (this.stayAlive || this.numUnfinishedTasks > 0)) {
 
       try {
         // Wait to acquire the semaphore, which means something is ready to run.
@@ -461,6 +502,8 @@ export class TaskRunner<Tags extends string> {
 //       the20s.push(task)
 //     }
 //   }
+//   manager.setStayAlive(true)
+//   setTimeout(() => manager.setStayAlive(false), 15000)
 
 //   await Promise.all([
 //     manager.run(),
