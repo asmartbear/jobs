@@ -13,6 +13,18 @@ export enum TaskState {
 }
 
 /**
+ * Exception thrown by a task, including information about the task.
+ * 
+ * You can use `this.thrown` to find the original object that was throws, and `this.task` for the task that threw it.
+ * The standard `Error` message will include the task title and the message from the original error.
+ */
+export class TaskError<Tags extends string> extends Error {
+  constructor(public readonly task: Task<Tags>, public readonly thrown: unknown) {
+    super(`Exception while processing task ${task.title}: ${thrown instanceof Error ? thrown.message : String(thrown)}`);
+  }
+}
+
+/**
  * Use to send status update messages about the task; will be ignored if not in verbose mode.
  */
 export type TaskUpdateFunction = (msg: string) => void;
@@ -159,7 +171,7 @@ export class Task<Tags extends string> {
   /**
    * Executes this Task, returning any `Error` thrown, or `null` if nothing was thrown.
    */
-  async execute(fStatus: TaskUpdateFunction): Promise<Error | null> {
+  async execute(fStatus: TaskUpdateFunction): Promise<TaskError<Tags> | null> {
     this.state = TaskState.Running;
     try {
       await this.executionFunction(fStatus);
@@ -167,7 +179,7 @@ export class Task<Tags extends string> {
       return null;
     } catch (error) {
       this.state = TaskState.Error;
-      return error as Error;
+      return new TaskError(this, error);
     } finally {
       this.completionMutex.release()    // release anyone waiting for this task to complete
     }
@@ -240,7 +252,7 @@ export class TaskRunner<Tags extends string> {
    */
   private readySemaphore = new Semaphore(0)
 
-  private _error: Error | null = null;
+  private _error: TaskError<Tags> | null = null;
 
   constructor(public readonly config: TaskRunnerConstructor<Tags>) {
     this.concurrencyLevel = config.concurrencyLevel ?? getNumCpus().length;
@@ -457,7 +469,7 @@ export class TaskRunner<Tags extends string> {
   /**
    * The first error encountered, if any.
    */
-  get error(): Error | null {
+  get error(): TaskError<Tags> | null {
     return this._error;
   }
 
