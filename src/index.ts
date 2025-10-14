@@ -26,8 +26,11 @@ export class TaskError<Tags extends string> extends Error {
 
 /**
  * Use to send status update messages about the task; will be ignored if not in verbose mode.
+ * 
+ * @param msg The message to display
+ * @param immediate (default `false`) Should this message be displayed immediately and blocking? Otherwise, waits for a backoff.
  */
-export type TaskUpdateFunction = (msg: string) => void;
+export type TaskUpdateFunction = (msg: string, immediate?: boolean) => void;
 
 /**
  * Task execution function.  This is the function that actually does the work of the task.
@@ -307,9 +310,9 @@ export class TaskRunner<Tags extends string> {
   /**
    * If in verbose mode, updates the status that goes with a specific task
    */
-  private updateStatus(statusIdx: number, msg: string) {
+  private updateStatus(statusIdx: number, msg: string, immediate: boolean) {
     if (this.status) {
-      this.status.update(statusIdx, msg)
+      this.status.update(statusIdx, msg, immediate)
     }
   }
 
@@ -381,7 +384,7 @@ export class TaskRunner<Tags extends string> {
   private async worker(statusIdx: number): Promise<void> {
     let hasDoneAnything = false   // don't emit messages until we've actually done something, so we don't take a slot on the command-line
     // Our own status function that only updates status if we've done something, and uses our worker index as a key
-    const fStatus = (msg: string) => (hasDoneAnything && this.updateStatus(statusIdx, msg))
+    const fStatus: TaskUpdateFunction = (msg, immediate) => (hasDoneAnything && this.updateStatus(statusIdx, msg, immediate ?? false))
     while (this._error === null && (this.stayAlive || this.numUnfinishedTasks > 0)) {
 
       try {
@@ -389,7 +392,7 @@ export class TaskRunner<Tags extends string> {
         if (this.readySemaphore.isLocked()) {
           // If we believe we'll be waiting, it's worth updating the status.
           // Otherwise, we're about to run something, so don't bother flickering the screen.
-          fStatus("💤")
+          fStatus("💤", true)
         }
         await this.readySemaphore.acquire(1, -statusIdx)   // prioritize existing workers so we don't create more slots than actually needed
       } catch (err) {
@@ -418,14 +421,14 @@ export class TaskRunner<Tags extends string> {
 
       // Prepare stats and lists for running the task
       hasDoneAnything = true
-      fStatus(`🏃‍♂️ ${task.title}`)
+      fStatus(`🏃‍♂️ ${task.title}`, true)
       this.runningTasks.push(task);
       TaskRunner.updateTagCounter(task, this.numQueuedTasksByTag, -1)
       TaskRunner.updateTagCounter(task, this.numRunningTasksByTag, 1)
 
       // Execute the task
       const tStart = Date.now()
-      const error = await task.execute((msg: string) => this.updateStatus(statusIdx, `🏃‍♂️ ${task.title}: ${msg}`));
+      const error = await task.execute((msg, immediate) => this.updateStatus(statusIdx, `🏃‍♂️ ${task.title}: ${msg}`, immediate ?? false));
       const tDuration = Date.now() - tStart
 
       // Update stats and lists
@@ -458,7 +461,7 @@ export class TaskRunner<Tags extends string> {
     }
 
     // Bye bye message!
-    fStatus("✌️")
+    fStatus("✌️", true)
 
     // Got here because we're totally done.
     // Some workers might still be going; that's fine.
