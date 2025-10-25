@@ -38,6 +38,13 @@ export type TaskUpdateFunction = (msg: string, immediate?: boolean) => void;
  */
 export type TaskExecutionFunction = (fStatus: TaskUpdateFunction) => Promise<unknown> | unknown;
 
+/**
+ * Promise-based time-wait function.
+ */
+function wait(ms: number): Promise<void> {
+  return new Promise(success => setTimeout(success, ms))
+}
+
 export type TaskRunnerConstructor<Tags extends string> = {
 
   /**
@@ -379,6 +386,23 @@ export class TaskRunner<Tags extends string> {
   }
 
   /**
+   * Waits until all tasks containing any of a set of tags have completed.
+   * New tasks with these tags might appear while waiting; it will still wait for all of them.
+   * If there's a gap when no tasks have these tags, it will complete; if more tasks are added
+   * afterwards with those tags, that's too bad -- it couldn't have known that!
+   */
+  async waitForTags(tags: Tags[]): Promise<void> {
+    while (true) {
+      // If any tasks are queued or running, that contain any of these tags, we're not finished waiting.
+      if (!tags.some(tag =>
+        (this.numQueuedTasksByTag.get(tag) ?? 0) + (this.numRunningTasksByTag.get(tag) ?? 0) > 0
+      )) break
+      // Wait a short while.  (This could be better if we had some event we could wait for!)
+      await wait(10)
+    }
+  }
+
+  /**
    * Runs one worker until queues are finished.
    */
   private async worker(statusIdx: number): Promise<void> {
@@ -523,6 +547,7 @@ export class TaskRunner<Tags extends string> {
 //   await Promise.all([
 //     manager.run(),
 //     Promise.all(the20s.map(task => task.waitForCompletion())).then(() => console.log("the 20s are done")),
+//     manager.waitForTags(['foo']).then(() => { console.log("foo tasks are done") })
 //   ]);
 
 //   if (manager.error) {
