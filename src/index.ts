@@ -262,6 +262,9 @@ export class TaskRunner<Tags extends string> {
    */
   private readySemaphore = new Semaphore(0)
 
+  /**
+   * If a task had an error, this is non-null with the error.
+   */
   private _error: TaskError<Tags> | null = null;
 
   constructor(public readonly config: TaskRunnerConstructor<Tags>) {
@@ -390,16 +393,21 @@ export class TaskRunner<Tags extends string> {
    * New tasks with these tags might appear while waiting; it will still wait for all of them.
    * If there's a gap when no tasks have these tags, it will complete; if more tasks are added
    * afterwards with those tags, that's too bad -- it couldn't have known that!
+   * 
+   * @return true if we're still running normally and all those tasks have completed; false if we stopped early due to error.
    */
-  async waitForTags(tags: Tags[]): Promise<void> {
-    while (true) {
+  async waitForTags(tags: Tags[]): Promise<boolean> {
+    while (!this._error) {    // terminate on error
       // If any tasks are queued or running, that contain any of these tags, we're not finished waiting.
       if (!tags.some(tag =>
         (this.numQueuedTasksByTag.get(tag) ?? 0) + (this.numRunningTasksByTag.get(tag) ?? 0) > 0
-      )) break
+      )) {
+        return !this._error
+      }
       // Wait a short while.  (This could be better if we had some event we could wait for!)
       await wait(10)
     }
+    return false
   }
 
   /**
